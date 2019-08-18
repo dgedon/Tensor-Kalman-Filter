@@ -70,13 +70,6 @@ P_= roundTN(P_,tol,PrankMax);
 
 %% Time Simulation of Tensor KF 
 
-
-% % symmetry, positive definiteness
-% tempPpos= 1;
-% tempPsymm= 1;
-% tempP_pos= 1;
-% tempP_symm= 1;
-
 timeTKF= 0;
 for k= t
     % convert y to TT
@@ -119,15 +112,6 @@ for k= t
     % get timer
     timeTKF= timeTKF+ toc;
     
-%     % check for symmetry and positive-definitness of P (MU), P_ (TU)
-%     tempPpos= min(tempPpos,min(eig(contract(P))));
-%     temp= contract(P);
-%     tempPsymm= min(tempPsymm,norm(temp-temp'));
-%     % P_
-%     tempP_pos= min(tempP_pos,min(eig(contract(P_))));
-%     temp= contract(P_);
-%     tempP_symm= min(tempP_symm,norm(temp-temp'));
-    
     %---------- Function Output Variables ----------
     % State xhat_out
     xhatOut(:,k)= contract(xhat);
@@ -135,10 +119,3 @@ for k= t
     % Output yHat_Out
     yhatOut(:,k)= contract(yhat);
 end
-
-
-% % symmetry positive definitenss
-% fprintf('\n\tmin P eig val\t\t %2.3e\n',tempPpos)
-% fprintf('\tP symmetry up to\t %2.3e\n',tempPsymm)
-% fprintf('\tmin P_ eig val\t\t %2.3e\n',tempP_pos)
-% fprintf('\tP_ symmetry up to\t %2.3e\n',tempP_symm)

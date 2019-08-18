@@ -1,4 +1,4 @@
-function [yhatOut,xhatOut,timeTKF,Pnorm]= ...
+function [yhatOut,xhatOut,timeTKF,K]= ... % Pnorm
     myMIMOTensorKF_FullSim_AO(A,C1,C2,Q,R,t,y,tol,varargin)
 %% Function Tensor Kalman Filter with vector output
 % myMatrixTensorKF_FullSim_AO.m
@@ -19,9 +19,15 @@ function [yhatOut,xhatOut,timeTKF,Pnorm]= ...
 %                   timeTKF - Time for computation
 %%
 
+
+doK= 1;
+K.norm= 0;
+K.K= 0;
+
 % defaul values
 PrankMax= Inf;
 SrankMax= Inf;
+timeLimit= Inf;
 
 for i=1:2:length(varargin)-1
     if (~isempty(varargin{i+1}))
@@ -32,6 +38,8 @@ for i=1:2:length(varargin)-1
                 SrankMax=varargin{i+1};
             case 'cdata'
                 cdata= varargin{i+1};
+            case 'timelimit'
+                timeLimit= varargin{i+1};
             otherwise
                 error('Unrecognized option: %s\n',varargin{i});
         end
@@ -74,109 +82,143 @@ P_= roundTN(P_,eps,PrankMax);
 
 %% Time Simulation of Tensor KF
 
-
 timeTKF= 0;
-for k= t
-    % set timer
-    tic
-    if 1
-        % convert y to TT
-        if 0    % use TT_SVD
-            ytt= myTTSVD(y(:,k),[C1.n(:,2);2]);
-            ytt= roundTN(ytt,tol);
-        else % use TT_ALS
-            if k== t(1)
-                % first time step: need TT_SVD conversion
-                % necessary orthogonalization
+try
+    for k= t
+        % set timer
+        tic
+        if ~isequal(R.n,ones(size(R.n))) % MIMO MU updates
+            
+            % convert y to TT
+            if 0    % use TT_SVD
                 ytt= myTTSVD(y(:,k),[C1.n(:,2);2]);
                 ytt= roundTN(ytt,tol);
-                % orthogonalization
-                di= d+1; % since d=2 and actually y has d=3
-                for id= di:-1:2
-                    % move norm to first core
-                    ytt= TT_orth_i(ytt,id,-1);
+            else % use TT_ALS
+                if k== t(1)
+                    % first time step: need TT_SVD conversion
+                    % necessary orthogonalization
+                    ytt= myTTSVD(y(:,k),[C1.n(:,2);2]);
+                    ytt= roundTN(ytt,tol);
+                    % orthogonalization
+                    di= d+1; % since d=2 and actually y has d=3
+                    for id= di:-1:2
+                        % move norm to first core
+                        ytt= TT_orth_i(ytt,id,-1);
+                    end
+                else
+                    % otherwise use TT_ALS with previous yTT as init
+                    % only do one half sweep (sufficient)
+                    ytt= myVec2TT_ALS(y(:,k),ytt,'sweepBackward',0);
+                    % orthogonalization (norm currently in last core)
+                    for id= di:-1:2
+                        % move norm to first core
+                        ytt= TT_orth_i(ytt,id,-1);
+                    end
                 end
-            else
-                % otherwise use TT_ALS with previous yTT as init
-                % only do one half sweep (sufficient)
-                ytt= myVec2TT_ALS(y(:,k),ytt,'sweepBackward',0);
-                % orthogonalization (norm currently in last core)
-                for id= di:-1:2
-                    % move norm to first core
-                    ytt= TT_orth_i(ytt,id,-1);
+            end
+            
+            % select first and second part of y
+            ytt1= selectLastCoreAO(ytt,1);
+            ytt2= selectLastCoreAO(ytt,2);
+            
+            %%%% Measurement update X with intermediate results
+            [xhatint,yhat1,P_int,temp]= myMIMOTensorKF_MU(C1,R,xhat_,ytt1,P_,tol,...
+                'PrankMax',PrankMax,'SrankMax',SrankMax);
+            
+            K_MU= zeros(n,p);
+            K_MU(:,1:p/2)= contract(temp);
+
+            
+            %%%% Measurement update Y
+            [xhat,yhat2,P,temp]= myMIMOTensorKF_MU(C2,R,xhatint,ytt2,P_int,tol,...
+                'PrankMax',inf,'SrankMax',SrankMax);
+            
+            K_MU(:,p/2+1:end)= contract(temp);
+            
+        else % SISO measurement update
+            
+            K_MU= zeros(n,p);
+            
+            %%%% Measurement update X with intermediate results
+            tempsize= C1.n(1,2);
+            for row= 1:p/2
+                i= ceil(row/tempsize);
+                j= row-(i-1)*tempsize;
+                
+                C1new.n= C1.n;
+                C1new.n(:,2)= ones(2,1);
+                C1new.core{1}= reshape(cdata.G1(j,:),C1new.n(1,:));
+                C1new.core{2}= reshape(cdata.E1(i,:),C1new.n(2,:));
+                
+                ytt1new.n= ones(2,3);
+                ytt1new.core{1}= reshape(y(row,k),ytt1new.n(1,:));
+                ytt1new.core{2}= reshape(1,ytt1new.n(2,:));
+                
+                [xhatint,yhat1,P_int,temp]= myMIMOTensorKF_MU_SISO(C1new,R,xhat_,ytt1new,P_,tol,...
+                    'PrankMax',inf);%2*PrankMax);
+                xhat_= xhatint;
+                P_= P_int;
+
+                if k==max(t) && doK== 1
+                    K_MU(:,row)= contract(temp);
+                end
+            end
+            
+            %%%% Measurement update Y
+            tempsize= C2.n(1,2);
+            for row= 1:p/2
+                i= ceil(row/tempsize);
+                j= row-(i-1)*tempsize;
+                
+                C2new.n= C2.n;
+                C2new.n(:,2)= ones(2,1);
+                C2new.core{1}= reshape(cdata.G2(j,:),C2new.n(1,:));
+                C2new.core{2}= reshape(cdata.E2(i,:),C2new.n(2,:));
+                
+                ytt2new.n= ones(2,3);
+                ytt2new.core{1}= reshape(y(row+p/2,k),ytt2new.n(1,:));
+                ytt2new.core{2}= reshape(1,ytt2new.n(2,:));
+                
+                [xhat,yhat2,P,temp]= myMIMOTensorKF_MU_SISO(C2new,R,xhatint,ytt2new,P_int,tol,... % P_int
+                    'PrankMax',inf);%2*PrankMax);
+                xhatint= xhat;
+                P_int= P;
+
+                if k==max(t) && doK==1
+                    K_MU(:,row+p/2)= contract(temp);
                 end
             end
         end
         
-        % select first and second part of y
-        ytt1= selectLastCoreAO(ytt,1);
-        ytt2= selectLastCoreAO(ytt,2);
+        %%%% Time update
+        [xhat_,P_]= myMIMOTensorKF_TU(A,Q,xhat,P,tol,'PrankMax',PrankMax);
         
-        %%%% Measurement update X with intermediate results
-        [xhatint,yhat1,P_int]= myMIMOTensorKF_MU(C1,R,xhat_,ytt1,P_,tol,...
-            'PrankMax',PrankMax,'SrankMax',SrankMax);
+        % timer count
+        timeTKF= timeTKF+ toc;
         
-        %%%% Measurement update Y
-        [xhat,yhat2,P]= myMIMOTensorKF_MU(C2,R,xhatint,ytt2,P_int,tol,...
-            'PrankMax',PrankMax,'SrankMax',SrankMax);
-        
-    else
-        
-        %%%% Measurement update X with intermediate results
-        temp= C1.n(1,2);
-        for row= 1:p/2
-            i= ceil(row/temp);
-            j= row-(i-1)*temp;
-            
-            C1new.n= C1.n;
-            C1new.n(:,2)= ones(2,1);
-            C1new.core{1}= reshape(cdata.G1(j,:),C1new.n(1,:));
-            C1new.core{2}= reshape(cdata.E1(i,:),C1new.n(2,:));
-            
-            ytt1new.n= ones(2,3);
-            ytt1new.core{1}= reshape(y(row,k),ytt1new.n(1,:));
-            ytt1new.core{2}= reshape(1,ytt1new.n(2,:));
-            
-            [xhatint,yhat1,P_int]= myMIMOTensorKF_MU(C1new,R,xhat_,ytt1new,P_,tol,...
-                'PrankMax',PrankMax,'SrankMax',SrankMax);
-            xhat_= xhatint;
+        % limit for computation time
+        if toc > timeLimit
+            error('timeout');
         end
         
-        %%%% Measurement update Y
-        temp= C2.n(1,2);
-        for row= 1:p/2
-            i= ceil(row/temp);
-            j= row-(i-1)*temp;
-            
-            C2new.n= C2.n;
-            C2new.n(:,2)= ones(2,1);
-            C2new.core{1}= reshape(cdata.G2(j,:),C2new.n(1,:));
-            C2new.core{2}= reshape(cdata.E2(i,:),C2new.n(2,:));
-            
-            ytt2new.n= ones(2,3);
-            ytt2new.core{1}= reshape(y(row+p/2,k),ytt2new.n(1,:));
-            ytt2new.core{2}= reshape(1,ytt2new.n(2,:));
-            
-            [xhat,yhat2,P]= myMIMOTensorKF_MU(C2new,R,xhatint,ytt2new,P_int,tol,...
-                'PrankMax',PrankMax,'SrankMax',SrankMax);
-            xhatint= xhat;
+        if k==max(t) && doK==1
+            K.norm= norm(K_MU); % (k)
+            K.K= K_MU; % only for last one
         end
-    end
-    
-    %%%% Time update
-    [xhat_,P_]= myMIMOTensorKF_TU(A,Q,xhat,P,tol,'PrankMax',PrankMax);
-    
-    % timer count
-    timeTKF= timeTKF+ toc;
-    
-    %Pnorm.P(k)= norm(contract(P));
-    %Pnorm.P_(k)= norm(contract(P_));
-    
-    
-    %---------- Function Output Variables ----------
-    % State xhat_out
+        
+        %---------- Function Output Variables ----------
+        % State xhat_out
         xhatOut(:,k)= contract(xhat);
-    
-    % Output yHat_Out
-    yhatOut(:,k)= 1;[contract(yhat1);contract(yhat2)];
+        
+        % Output yHat_Out
+        yhatOut(:,k)= 1;    %[contract(yhat1);contract(yhat2)];
+    end
+catch ME
+    if strcmpi(ME.message,'timeout')
+        %fprintf('\tException caught timeout (%4.2e > %i) conventional KF!\n',toc,timeLimit);
+    end
+    %fprintf('\tVariables assigned NaN\n');
+    timeTKF= nan;
+    yhatOut= nan(p,max(t));
+    xhatOut= nan(n,max(t));
 end

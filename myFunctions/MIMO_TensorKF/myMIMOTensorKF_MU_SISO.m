@@ -1,4 +1,4 @@
-function [xhat,yhat,P,K]= myMIMOTensorKF_MU(C,R,xhat_,y,P_,tol,varargin)
+function [xhat,yhat,P,K]= myMIMOTensorKF_MU_SISO(C,R,xhat_,y,P_,tol,varargin)
 %% Tensor Kalman Filter Measurement Update
 % myMIMOTensorKF_MU.m
 % Date:             01.05.2019
@@ -18,15 +18,12 @@ function [xhat,yhat,P,K]= myMIMOTensorKF_MU(C,R,xhat_,y,P_,tol,varargin)
 %% Limitation on TN-rank of P and P_
 
 PrankMax= Inf;
-SrankMax= Inf;
 
 for i=1:2:length(varargin)-1
     if (~isempty(varargin{i+1}))
         switch lower(varargin{i})
             case 'prankmax'
                 PrankMax=varargin{i+1};
-            case 'srankmax'
-                SrankMax=varargin{i+1};
             otherwise
                 error('Unrecognized option: %s\n',varargin{i});
         end
@@ -42,37 +39,20 @@ d= size(C.n,1);
 %%%% Riccati part %%%%
 % S = C * P(t|t-1) * C' + R
 S= contractab(P_,C,[2,3]);
-S= roundTN(S,tol);
 S= contractab(S,C,[3,3]);
-S= roundTN(S,tol);
-S= addTN(S,R);
-S= roundTN(S,tol);
-
-if ~isequal([S.n(:,1) S.n(:,end)], ones(d,2))
-    S= roundTN(S,tol,SrankMax);
-    fprintf('\tTrunction of S to ttr(S)=%i done\n',SrankMax);
-end
+S= contract(S); %S.core{1}*S.core{2};
+S= S+R.core{1};
 
 %%%% Riccati part inverse %%%%
 % if all TN ranks are one then the cores are matrices and inversion
 % is simply the inversion of the matrices
-if 1
-    Sinv.n= S.n;
-    for i= 1:d
-        Sinv.core{i}= inv(squeeze(S.core{i})); % pinv
-        Sinv.core{i}= reshape(Sinv.core{i},Sinv.n(i,:));
-    end
-else
-    Sinv= myTTSVD(pinv(contract(S)),S.n(:,2:3));
-%     Sinv= roundTN(Sinv,eps);
-end
+Sinv= 1./S;
     
 %%%% Kalman filter gain %%%%
 % K = P(t|t-1) * C' * Sinv
 K= contractab(P_,C,[3,3]);
 K= roundTN(K,tol);
-K= contractab(Sinv,K,[2,3]);
-K= roundTN(K,tol);
+K.core{1}= K.core{1}*Sinv;
 
 %%%% Measurement residual error or innovation error %%%%
 % v = y(t) - C * xhat(t|t-1)
@@ -107,4 +87,4 @@ P= roundTN(P,tol,PrankMax);
 %%%% A posteriori output estimate %%%%
 % y(t|t) = C * xhat(t|t)
 yhat= contractab(xhat,C,[2,3]);
-yhat= roundTN(yhat,tol);
+% yhat= roundTN(yhat,tol);

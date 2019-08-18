@@ -1,4 +1,4 @@
-function [yhat,xhat,P]= myKF_MU(C,R,y,P_,xhat_)
+function [yhat,xhat,P,K]= myKF_MU(C,R,y,P_,xhat_)
 %% Function Kalman Filter Measurement Update
 % myKF_MU.m
 % Date:             22.11.2018

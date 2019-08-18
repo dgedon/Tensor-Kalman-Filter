@@ -1,4 +1,4 @@
-function [yhat,xhat,timeKF,Pnorm]= myKF_FullSim(A,C,Q,R,t,y,varargin)
+function [yhat,xhat,timeKF,K]= myKF_FullSim(A,C,Q,R,t,y,varargin)% Pnorm
 %% Function Kalman Filter without input
 % myKF_FullSim.m
 % Date:             13.11.2018
@@ -39,7 +39,6 @@ P_= P0; %0.1*
 
 timeKF= 0;
 % simulation
-% timeLimit= 3;
 try
     for k= 1:length(t)
         % prevent computation when timeout error occurs anyways
@@ -50,12 +49,29 @@ try
         % set timer
         tic
         % execute kalman filter
-        if 0
-            [yhat(1:p/2,k),xhatint,P_int]= myKF_MU(C(1:p/2,:),R(1:p/2,1:p/2),y(1:p/2,k),P_,xhat_);
-            [yhat(p/2+1:end,k),xhat(:,k),P]= myKF_MU(C(p/2+1:end,:),R(1:p/2,1:p/2),y(p/2+1:end,k),P_int,xhatint);
-        else
-            [yhat(:,k),xhat(:,k),P]= myKF_MU(C,R,y(:,k),P_,xhat_);
-        end
+        % if 0 
+        %     % separate x- and y-MU
+        %     [yhat(1:p/2,k),xhatint,P_int]= myKF_MU(C(1:p/2,:),R(1:p/2,1:p/2),y(1:p/2,k),P_,xhat_);
+        %     [yhat(p/2+1:end,k),xhat(:,k),P]= myKF_MU(C(p/2+1:end,:),R(1:p/2,1:p/2),y(p/2+1:end,k),P_int,xhatint);
+        % elseif 0
+        %     % siso update
+        %     % x-direction
+        %     for row= 1:p/2
+        %         [yhat(row,k),xhatint,P_int,K(row,:)]= myKF_MU(C(row,:),R(row,row),y(row,k),P_,xhat_);
+        %         xhat_= xhatint;
+        %         P_= P_int;
+        %     end
+        %     % y-direction
+        %     for row= p/2+1:p
+        %         [yhat(row,k),xhatTemp,P,K(row,:)]= myKF_MU(C(row,:),R(row,row),y(row,k),P_int,xhatint);
+        %         xhatint= xhatTemp;
+        %         P_int= P;
+        %     end
+        %     xhat(:,k)= xhatTemp;
+        % else
+            % full update
+            [yhat(:,k),xhat(:,k),P,K]= myKF_MU(C,R,y(:,k),P_,xhat_);
+        % end
         % TU
         [xhat_,P_]= myKF_TU(A,Q,P,xhat(:,k));
         % timer
@@ -63,9 +79,7 @@ try
         % limit for computation time
         if toc > timeLimit
             error('timeout');
-        end
-        %Pnorm.P(k)= norm(P);
-        %Pnorm.P_(k)= norm(P_);
+        end        
     end
 catch ME
     if strcmpi(ME.message,'timeout')
